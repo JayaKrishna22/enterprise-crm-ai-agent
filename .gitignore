@@ -13,6 +13,10 @@ obj/
 *.sqlite
 *.sqlite3
 
-# Local secrets and configuration
+# Local configuration and secrets
 .env
 appsettings.Local.json
+
+# OS files
+.DS_Store
+Thumbs.db
