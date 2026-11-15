@@ -1,0 +1,18 @@
+# Visual Studio
+.vs/
+**/.vs/
+*.suo
+*.user
+
+# Build output
+bin/
+obj/
+
+# SQLite databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local secrets and configuration
+.env
+appsettings.Local.json
