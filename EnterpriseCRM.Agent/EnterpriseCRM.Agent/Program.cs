@@ -1,17 +1,48 @@
-﻿
-using ModelContextProtocol.Client;
+﻿using ModelContextProtocol.Client;
+using ModelContextProtocol.Protocol;
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
-using Microsoft.Data.Sqlite;
 
-// Initialize SQLite database.
-var dbConnection = new SqliteConnection(
+// Initialize SQLite once, before any session operations.
+await using var dbConnection = new SqliteConnection(
     "Data Source=enterprisecrm-agent.db");
 
 await dbConnection.OpenAsync();
 
+// Enable foreign key enforcement.
+using (var foreignKeyCommand = dbConnection.CreateCommand())
+{
+    foreignKeyCommand.CommandText = "PRAGMA foreign_keys = ON;";
+    await foreignKeyCommand.ExecuteNonQueryAsync();
+}
 
+// Create database schema before session operations.
+using (var schemaCommand = dbConnection.CreateCommand())
+{
+    schemaCommand.CommandText = """
+        CREATE TABLE IF NOT EXISTS Sessions
+        (
+            SessionId TEXT PRIMARY KEY,
+            UserId TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS Messages
+        (
+            Id INTEGER PRIMARY KEY AUTOINCREMENT,
+            SessionId TEXT NOT NULL,
+            MessageJson TEXT NOT NULL,
+            CreatedAt TEXT NOT NULL,
+            FOREIGN KEY (SessionId)
+                REFERENCES Sessions(SessionId)
+        );
+        """;
+
+    await schemaCommand.ExecuteNonQueryAsync();
+}
+
+Console.WriteLine("SQLite database initialized.");
 // Identify user and conversation session.
 
 Console.Write("Enter User ID: ");
@@ -155,43 +186,6 @@ using var httpClient = new HttpClient
     Timeout = TimeSpan.FromMinutes(5)
 };
 
-// Initialize SQLite database.
- dbConnection = new SqliteConnection(
-    "Data Source=enterprisecrm-agent.db");
-
-await dbConnection.OpenAsync();
-
-// Enable foreign key enforcement.
-var pragmaCommand = dbConnection.CreateCommand();
-pragmaCommand.CommandText = "PRAGMA foreign_keys = ON;";
-await pragmaCommand.ExecuteNonQueryAsync();
-
-// Create database tables.
-var createTables = dbConnection.CreateCommand();
-
-createTables.CommandText = """
-    CREATE TABLE IF NOT EXISTS Sessions
-    (
-        SessionId TEXT PRIMARY KEY,
-        UserId TEXT NOT NULL,
-        CreatedAt TEXT NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS Messages
-    (
-        Id INTEGER PRIMARY KEY AUTOINCREMENT,
-        SessionId TEXT NOT NULL,
-        MessageJson TEXT NOT NULL,
-        CreatedAt TEXT NOT NULL,
-        FOREIGN KEY (SessionId)
-            REFERENCES Sessions(SessionId)
-    );
-    """;
-
-await createTables.ExecuteNonQueryAsync();
-
-Console.WriteLine("SQLite database initialized.");
-
 while (true)
 {
     Console.WriteLine();
@@ -283,6 +277,7 @@ while (true)
                 messages.Add(new
                 {
                     role = "tool",
+                    tool_name = toolName,
                     content = $"Error: Tool '{toolName}' is unavailable."
                 });
 
@@ -305,12 +300,19 @@ while (true)
                     toolName,
                     arguments);
 
-                var resultJson = JsonSerializer.Serialize(toolResult);
+                // Extract the actual text content instead of serializing
+                // the entire MCP result object.
+                var toolContent = string.Join(
+                    "\n",
+                    toolResult.Content
+                        .OfType<TextContentBlock>()
+                        .Select(block => block.Text));
 
                 messages.Add(new
                 {
                     role = "tool",
-                    content = resultJson
+                    tool_name = toolName,
+                    content = toolContent
                 });
 
                 Console.WriteLine($"[Agent] Tool completed: {toolName}");
@@ -320,59 +322,62 @@ while (true)
                 messages.Add(new
                 {
                     role = "tool",
+                    tool_name = toolName,
                     content = $"Tool execution failed: {ex.Message}"
                 });
 
-                Console.WriteLine("[Agent] Tool execution failed: " + ex.Message);
+                Console.WriteLine(
+                    $"[Agent] Tool execution failed: {ex.Message}");
             }
         }
-    }
 
+      
+    }
     if (!finalAnswerReceived)
     {
         Console.WriteLine(
             "[Agent] Maximum tool-call iterations reached.");
     }
-}
 
-Console.WriteLine("Agent session ended.");
+    Console.WriteLine("Agent session ended.");
 
-Console.WriteLine();
-Console.WriteLine("Agent execution completed.");
+    Console.WriteLine();
+    Console.WriteLine("Agent execution completed.");
 
-// Helper: Convert JSON values into normal C# objects.
-static object? ConvertJsonElement(JsonElement element)
-{
-    switch (element.ValueKind)
+    // Helper: Convert JSON values into normal C# objects.
+    static object? ConvertJsonElement(JsonElement element)
     {
-        case JsonValueKind.String:
-            return element.GetString();
+        switch (element.ValueKind)
+        {
+            case JsonValueKind.String:
+                return element.GetString();
 
-        case JsonValueKind.Number:
-            return element.TryGetInt64(out var integer)
-                ? integer
-                : element.GetDouble();
+            case JsonValueKind.Number:
+                return element.TryGetInt64(out var integer)
+                    ? integer
+                    : element.GetDouble();
 
-        case JsonValueKind.True:
-            return true;
+            case JsonValueKind.True:
+                return true;
 
-        case JsonValueKind.False:
-            return false;
+            case JsonValueKind.False:
+                return false;
 
-        case JsonValueKind.Null:
-            return null;
+            case JsonValueKind.Null:
+                return null;
 
-        case JsonValueKind.Object:
-            return element.EnumerateObject().ToDictionary(
-                property => property.Name,
-                property => ConvertJsonElement(property.Value));
+            case JsonValueKind.Object:
+                return element.EnumerateObject().ToDictionary(
+                    property => property.Name,
+                    property => ConvertJsonElement(property.Value));
 
-        case JsonValueKind.Array:
-            return element.EnumerateArray()
-                .Select(ConvertJsonElement)
-                .ToList();
+            case JsonValueKind.Array:
+                return element.EnumerateArray()
+                    .Select(ConvertJsonElement)
+                    .ToList();
 
-        default:
-            return null;
+            default:
+                return null;
+        }
     }
 }
