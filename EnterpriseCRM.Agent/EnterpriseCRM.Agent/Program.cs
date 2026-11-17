@@ -339,11 +339,6 @@ while (true)
             "[Agent] Maximum tool-call iterations reached.");
     }
 
-    Console.WriteLine("Agent session ended.");
-
-    Console.WriteLine();
-    Console.WriteLine("Agent execution completed.");
-
     // Helper: Convert JSON values into normal C# objects.
     static object? ConvertJsonElement(JsonElement element)
     {
@@ -381,3 +376,9 @@ while (true)
         }
     }
 }
+
+// These should execute only after the user enters exit.
+Console.WriteLine("Agent session ended.");
+
+Console.WriteLine();
+Console.WriteLine("Agent execution completed.");
